@@ -1,8 +1,13 @@
 [package]
 name = "yew_webview_bridge"
+description = "2-way communcation bridge between web-view and yew"
+keywords = ["yew", "web-view"]
+license = "MIT OR Apache-2.0"
 version = "0.1.0"
 authors = ["Maximilian Goisser <goisser94@gmail.com>"]
 edition = "2018"
+repository = "https://github.com/hobofan/yew_webview_bridge"
+readme = "README.md"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

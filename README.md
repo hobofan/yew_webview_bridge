@@ -65,6 +65,10 @@ web_view::builder()
     .unwrap();
 ```
 
+#### Acknowledgements
+
+A large chunk of inspiration was taken from the [discussion about the issue](https://github.com/Boscop/web-view/issues/135), and the [resulting example repository](https://github.com/mbuscemi/webview-yew-minimal) by [@mbuscemi](https://github.com/mbuscemi). Thanks go out to everyone involved!
+
 #### License
 
 <sup>
