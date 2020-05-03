@@ -1,0 +1,26 @@
+[package]
+name = "yew_webview_bridge"
+version = "0.1.0"
+authors = ["Maximilian Goisser <goisser94@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1.0.52" }
+rand = { version = "=0.6.5", features = ["wasm-bindgen"] }
+
+# frontend
+dashmap = { version = "3.11.1", optional = true }
+stdweb = { version = "0.4.20", optional = true }
+wasm-bindgen = { version = "0.2.62", optional = true }
+wasm-bindgen-futures = { version = "0.4.12", optional = true }
+yew = { version = "0.14", default-features = false, features = ["std_web"], optional = true }
+
+# backend
+web-view = { version = "0.5.3", optional = true }
+
+[features]
+default = []
+
+frontend = ["yew", "wasm-bindgen-futures", "wasm-bindgen", "stdweb", "dashmap"]
+backend = ["web-view"]
