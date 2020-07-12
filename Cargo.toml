@@ -3,7 +3,7 @@ name = "yew_webview_bridge"
 description = "2-way communcation bridge between web-view and yew"
 keywords = ["yew", "web-view"]
 license = "MIT OR Apache-2.0"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Maximilian Goisser <goisser94@gmail.com>"]
 edition = "2018"
 repository = "https://github.com/hobofan/yew_webview_bridge"
@@ -11,18 +11,18 @@ readme = "README.md"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1.0.52" }
-rand = { version = "=0.6.5", features = ["wasm-bindgen"] }
+serde_json = { version = "1.0" }
+rand = { version = "0.7", features = ["wasm-bindgen"] }
 
 # frontend
-dashmap = { version = "3.11.1", optional = true }
+dashmap = { version = "3.11", optional = true }
 stdweb = { version = "0.4.20", optional = true }
-wasm-bindgen = { version = "0.2.62", optional = true }
-wasm-bindgen-futures = { version = "0.4.12", optional = true }
-yew = { version = "0.14", default-features = false, features = ["std_web"], optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+yew = { version = "0.17", default-features = false, features = ["std_web"], optional = true }
 
 # backend
-web-view = { version = "0.5.3", optional = true }
+web-view = { version = "0.6", optional = true }
 
 [features]
 default = []
