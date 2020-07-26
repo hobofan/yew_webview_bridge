@@ -1,4 +1,3 @@
-use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize)]
@@ -26,9 +25,20 @@ impl<'a, T: Deserialize<'a> + Serialize> Message<T> {
     }
 }
 
+use rand::Rng;
+#[cfg(feature = "frontend")]
+use wasm_bindgen::prelude::wasm_bindgen;
+
+#[cfg(feature = "frontend")]
+#[wasm_bindgen(module = "/src/js/invoke_webview.js")]
+extern "C" {
+    fn invoke_webview(message: String);
+}
+
 #[cfg(feature = "frontend")]
 pub mod frontend {
     pub use super::Message;
+    use crate::invoke_webview;
     use dashmap::DashMap;
     use serde::{de::DeserializeOwned, Deserialize, Serialize};
     use std::future::Future;
@@ -36,8 +46,8 @@ pub mod frontend {
     use std::pin::Pin;
     use std::sync::{Arc, RwLock};
     use std::task::{Context, Poll, Waker};
-    use stdweb::{js, unstable::TryInto, Value};
-    use wasm_bindgen::JsValue;
+    use wasm_bindgen::{prelude::Closure, JsCast, JsValue};
+    use web_sys::{Document, Window};
     use yew::prelude::{Component, ComponentLink};
 
     type MessageFuturesMap =
@@ -46,7 +56,14 @@ pub mod frontend {
     pub struct WebViewMessageService {
         subscription_id: u32,
         message_futures_map: MessageFuturesMap,
-        event_listener: Value,
+        event_listener: Closure<dyn Fn(JsValue)>,
+    }
+
+    #[derive(Deserialize)]
+    struct JsEvent {
+        #[serde(rename = "type")]
+        event_type: String,
+        details: String,
     }
 
     impl Default for WebViewMessageService {
@@ -57,11 +74,14 @@ pub mod frontend {
 
     impl Drop for WebViewMessageService {
         fn drop(&mut self) {
-            js! {
-                var value = @{&self.event_listener};
-                document.removeEventListener(value.name, value.listener);
-                value.callback.drop();
-            }
+            let window: Window = web_sys::window().unwrap();
+            let document: Document = window.document().unwrap();
+            document
+                .remove_event_listener_with_callback(
+                    "yew-webview-bridge-response",
+                    self.event_listener.as_ref().unchecked_ref(),
+                )
+                .expect("unable to remove yew-webview-bridge-response listener");
         }
     }
 
@@ -70,54 +90,55 @@ pub mod frontend {
             let subscription_id = Message::<()>::generate_subscription_id();
             let message_futures_map = Arc::new(DashMap::new());
 
-            let callback = Self::response_handler(subscription_id, message_futures_map.clone());
+            let window: Window = web_sys::window().unwrap();
+            let document: Document = window.document().unwrap();
 
-            let js_callback = js! {
-                var callback = @{callback};
-                var listener = event => callback(event.detail);
-                document.addEventListener("yew-webview-bridge-response", listener);
-                return {
-                    name: "yew-webview-bridge-response",
-                    callback: callback,
-                    listener: listener
-                };
-            };
+            let listener_futures_map = message_futures_map.clone();
+            let listener: Closure<dyn Fn(JsValue)> =
+                Closure::wrap(Box::new(move |js_event: JsValue| {
+                    let event: JsEvent =
+                        js_event.into_serde().expect("unable to deserialize event");
+                    Self::response_handler(subscription_id, listener_futures_map.clone(), event);
+                }));
+
+            document
+                .add_event_listener_with_callback(
+                    "yew-webview-bridge-response",
+                    listener.as_ref().unchecked_ref(),
+                )
+                .expect("unable to register yew-webview-bridge-response callback");
 
             Self {
                 subscription_id,
                 message_futures_map,
-                event_listener: js_callback,
+                event_listener: listener,
             }
         }
 
         fn response_handler(
             subscription_id: u32,
             message_futures_map: MessageFuturesMap,
-        ) -> Box<dyn Fn(Value)> {
-            Box::new(move |value: Value| {
-                let message_str: String = value
-                    .try_into()
-                    .expect("unable to parse payload from event");
-                let message: Message<serde_json::Value> =
-                    serde_json::from_str(&message_str).unwrap();
+            event: JsEvent,
+        ) {
+            let message_str: String = event.details;
+            let message: Message<serde_json::Value> = serde_json::from_str(&message_str).unwrap();
 
-                if message.subscription_id != subscription_id {
-                    return;
-                }
-                if !message_futures_map.contains_key(&message.message_id) {
-                    return;
-                }
+            if message.subscription_id != subscription_id {
+                return;
+            }
+            if !message_futures_map.contains_key(&message.message_id) {
+                return;
+            }
 
-                let future_value = message_futures_map.remove(&message.message_id).unwrap().1;
+            let future_value = message_futures_map.remove(&message.message_id).unwrap().1;
 
-                future_value.write().unwrap().1 = Some(message.inner);
-                future_value
-                    .write()
-                    .unwrap()
-                    .0
-                    .as_ref()
-                    .map(|n| n.wake_by_ref());
-            })
+            future_value.write().unwrap().1 = Some(message.inner);
+            future_value
+                .write()
+                .unwrap()
+                .0
+                .as_ref()
+                .map(|n| n.wake_by_ref());
         }
 
         fn new_result_future<T>(&self, message_id: u32) -> MessageFuture<T> {
@@ -130,9 +151,9 @@ pub mod frontend {
         }
 
         fn send_message_to_webview<T: Serialize>(message: T) {
-            js! {
-                window.external.invoke(@{serde_json::to_string(&message).unwrap()});
-            }
+            let message_serialized =
+                serde_json::to_string(&message).expect("unable to serialize message");
+            unsafe { invoke_webview(message_serialized) };
         }
 
         fn new_message<'a, T: Serialize + Deserialize<'a>>(&self, message: T) -> Message<T> {
