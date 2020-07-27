@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct Message<T> {
     pub subscription_id: u32,
     pub message_id: u32,
@@ -47,7 +47,8 @@ pub mod frontend {
     use std::sync::{Arc, RwLock};
     use std::task::{Context, Poll, Waker};
     use wasm_bindgen::{prelude::Closure, JsCast, JsValue};
-    use web_sys::{Document, Window};
+    use web_sys::{Document, Window, EventListener, console, CustomEvent};
+    use js_sys::Function;
     use yew::prelude::{Component, ComponentLink};
 
     type MessageFuturesMap =
@@ -56,14 +57,9 @@ pub mod frontend {
     pub struct WebViewMessageService {
         subscription_id: u32,
         message_futures_map: MessageFuturesMap,
-        event_listener: Closure<dyn Fn(JsValue)>,
-    }
-
-    #[derive(Deserialize)]
-    struct JsEvent {
-        #[serde(rename = "type")]
-        event_type: String,
-        details: String,
+        event_listener: EventListener,
+        event_listener_closure: Closure<dyn Fn(CustomEvent)>,
+        event_listener_function: Function,
     }
 
     impl Default for WebViewMessageService {
@@ -77,9 +73,9 @@ pub mod frontend {
             let window: Window = web_sys::window().unwrap();
             let document: Document = window.document().unwrap();
             document
-                .remove_event_listener_with_callback(
+                .remove_event_listener_with_event_listener(
                     "yew-webview-bridge-response",
-                    self.event_listener.as_ref().unchecked_ref(),
+                    &self.event_listener,
                 )
                 .expect("unable to remove yew-webview-bridge-response listener");
         }
@@ -94,17 +90,21 @@ pub mod frontend {
             let document: Document = window.document().unwrap();
 
             let listener_futures_map = message_futures_map.clone();
-            let listener: Closure<dyn Fn(JsValue)> =
-                Closure::wrap(Box::new(move |js_event: JsValue| {
-                    let event: JsEvent =
-                        js_event.into_serde().expect("unable to deserialize event");
+            let closure: Closure<dyn Fn(CustomEvent)> =
+                Closure::wrap(Box::new(move |event: CustomEvent| {
+                    log::debug!("Event detail: {:?}", event.detail());
                     Self::response_handler(subscription_id, listener_futures_map.clone(), event);
                 }));
 
+            let function = Function::new_with_args("event", "console.log(\"js inline responding to event: \", event);");
+
+            let mut listener = EventListener::new();
+            listener.handle_event(closure.as_ref().unchecked_ref());
+
             document
-                .add_event_listener_with_callback(
+                .add_event_listener_with_event_listener(
                     "yew-webview-bridge-response",
-                    listener.as_ref().unchecked_ref(),
+                    &listener,
                 )
                 .expect("unable to register yew-webview-bridge-response callback");
 
@@ -112,15 +112,20 @@ pub mod frontend {
                 subscription_id,
                 message_futures_map,
                 event_listener: listener,
+                event_listener_closure: closure,
+                event_listener_function: function,
             }
         }
 
         fn response_handler(
             subscription_id: u32,
             message_futures_map: MessageFuturesMap,
-            event: JsEvent,
+            event: CustomEvent,
         ) {
-            let message_str: String = event.details;
+            let detail: JsValue = event.detail();
+            log::debug!("Detail: {:?}", detail);
+            let message_str: String = detail.as_string().expect("expected event detail to be a String");
+            log::debug!("Message string: {}", message_str);
             let message: Message<serde_json::Value> = serde_json::from_str(&message_str).unwrap();
 
             if message.subscription_id != subscription_id {
@@ -132,13 +137,12 @@ pub mod frontend {
 
             let future_value = message_futures_map.remove(&message.message_id).unwrap().1;
 
-            future_value.write().unwrap().1 = Some(message.inner);
-            future_value
-                .write()
-                .unwrap()
-                .0
-                .as_ref()
-                .map(|n| n.wake_by_ref());
+            let mut future_value_write = future_value.write().unwrap();
+            future_value_write.1 = Some(message.inner);
+            future_value_write.0.as_ref().map(|waker| {
+                log::debug!("Mapping waker: {:?}", waker);
+                waker.wake_by_ref();
+            });
         }
 
         fn new_result_future<T>(&self, message_id: u32) -> MessageFuture<T> {
@@ -196,13 +200,28 @@ pub mod frontend {
 
         fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
             let mut message = self.message.write().unwrap();
+
+            log::debug!("successfully obtained message write lock");
+
             if (*message).1.is_none() {
                 message.0 = Some(cx.waker().clone());
                 return Poll::Pending;
             }
 
+            log::debug!("message is not none: {:?}", message.1);
+
             let message = message.1.as_ref().unwrap();
-            let value = serde_json::from_value(message.clone()).unwrap();
+
+            log::debug!("Successfully obtained message as ref: {:?}", message);
+
+            let result = serde_json::from_value(message.clone());
+
+            if let Err(error) = &result {
+                log::debug!("Message deserialization error: {}", error);
+            }
+            
+
+            let value = result.expect("unable to deserialize message");
             Poll::Ready(value)
         }
     }
@@ -256,12 +275,15 @@ pub mod backend {
     }
 
     fn send_response_to_yew<T, M: Serialize>(webview: &mut WebView<T>, message: Message<M>) {
+        let message_string = serde_json::to_string(&message).unwrap();
+        println!("Message string: {}", message_string);
         let eval_script = format!(
-            r#"document.dispatchEvent(
+            r#"
+        document.dispatchEvent(
             new CustomEvent("{event_name}", {{ detail: {message:?} }})
         );"#,
             event_name = "yew-webview-bridge-response",
-            message = serde_json::to_string(&message).unwrap()
+            message = message_string
         );
         webview
             .eval(&eval_script)
