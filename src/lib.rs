@@ -81,6 +81,7 @@ pub mod frontend {
     use std::sync::{Arc, RwLock};
     use std::task::{Context, Poll};
     use wasm_bindgen::{prelude::Closure, JsCast, JsValue};
+    use wasm_bindgen_futures::spawn_local;
     use web_sys::{Document, Window, EventListener, CustomEvent};
     use yew::prelude::{Component, ComponentLink};
 
@@ -117,8 +118,8 @@ pub mod frontend {
     impl Drop for WebViewMessageService {
         /// Removes the event listener.
         fn drop(&mut self) {
-            let window: Window = web_sys::window().unwrap();
-            let document: Document = window.document().unwrap();
+            let window: Window = web_sys::window().expect("unable to obtain current Window");
+            let document: Document = window.document().expect("unable to obtain current Document");
             document
                 .remove_event_listener_with_event_listener(
                     LISTENER_TYPE,
@@ -133,8 +134,8 @@ pub mod frontend {
             let subscription_id = Message::<()>::generate_subscription_id();
             let message_futures_map = Arc::new(DashMap::new());
 
-            let window: Window = web_sys::window().unwrap();
-            let document: Document = window.document().unwrap();
+            let window: Window = web_sys::window().expect("unable to obtain current Window");
+            let document: Document = window.document().expect("unable to obtain current Document");
 
             let listener_futures_map = message_futures_map.clone();
             let closure: Closure<dyn Fn(CustomEvent)> =
@@ -170,7 +171,7 @@ pub mod frontend {
         ) {
             let detail: JsValue = event.detail();
             let message_str: String = detail.as_string().expect("expected event detail to be a String");
-            let message: Message<serde_json::Value> = serde_json::from_str(&message_str).unwrap();
+            let message: Message<serde_json::Value> = serde_json::from_str(&message_str).expect("unable to parse json from string");
 
             if message.subscription_id != subscription_id {
                 return;
@@ -179,9 +180,11 @@ pub mod frontend {
                 return;
             }
 
-            let future_value = message_futures_map.remove(&message.message_id).unwrap().1;
+            let future_value = message_futures_map.remove(&message.message_id)
+                .expect("unable to remove message from message_futures_map").1;
 
-            let mut future_value_write = future_value.write().unwrap();
+            let mut future_value_write = future_value.write()
+                .expect("unable to obtain write lock for WakerMessage in message_futures_map");
             future_value_write.message = Some(message.inner);
             future_value_write.waker.as_ref().map(|waker| {
                 waker.wake_by_ref();
@@ -258,7 +261,7 @@ pub mod frontend {
                 return Poll::Pending;
             }
 
-            let message = waker_message.message.as_ref().unwrap();
+            let message = waker_message.message.as_ref().expect("unable to obtain reference to message in WakerMessage");
             let result = serde_json::from_value(message.clone());
             let value = result.expect("unable to deserialize message");
             Poll::Ready(value)
@@ -272,18 +275,10 @@ pub mod frontend {
     where
         F: Future<Output = COMP::Message> + 'static,
     {
-        use wasm_bindgen_futures::future_to_promise;
-
         let link = link.clone();
-        let js_future = async move {
+        spawn_local(async move {
             link.send_message(future.await);
-            Ok(JsValue::NULL)
-        };
-
-        #[allow(unused_must_use)]
-        {
-            future_to_promise(js_future);
-        }
+        });
     }
 }
 
@@ -327,7 +322,8 @@ pub mod backend {
         arg: &'a str,
         handler: H,
     ) {
-        let in_message: Message<IN> = serde_json::from_str(&arg).unwrap();
+        let in_message: Message<IN> = serde_json::from_str(&arg)
+            .expect("unable to deserialize message from json string");
 
         let output = handler(in_message.inner);
         if let Some(response) = output {
@@ -344,7 +340,7 @@ pub mod backend {
     /// Send a response a [Message](Message) recieved from the frontend via
     /// `web-view`'s `eval()` method.
     fn send_response_to_yew<T, M: Serialize>(webview: &mut WebView<T>, message: Message<M>) {
-        let message_string = serde_json::to_string(&message).unwrap();
+        let message_string = serde_json::to_string(&message).expect("unable to serialize message to json string");
         println!("Message string: {}", message_string);
         let eval_script = format!(
             r#"
