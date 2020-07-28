@@ -1,4 +1,6 @@
+use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::task::Waker;
 
 /// The message passed between the backend and frontend. Includes
 /// associated metadata ensuring that the message is delivered to the
@@ -31,10 +33,9 @@ impl<'a, T: Deserialize<'a> + Serialize> Message<T> {
     }
 }
 
-use rand::Rng;
 #[cfg(feature = "frontend")]
 use wasm_bindgen::prelude::wasm_bindgen;
-use std::task::Waker;
+
 
 #[cfg(feature = "frontend")]
 #[wasm_bindgen(module = "/src/js/invoke_webview.js")]
