@@ -28,6 +28,7 @@ impl<'a, T: Deserialize<'a> + Serialize> Message<T> {
 use rand::Rng;
 #[cfg(feature = "frontend")]
 use wasm_bindgen::prelude::wasm_bindgen;
+use std::task::Waker;
 
 #[cfg(feature = "frontend")]
 #[wasm_bindgen(module = "/src/js/invoke_webview.js")]
@@ -35,31 +36,49 @@ extern "C" {
     fn invoke_webview(message: String);
 }
 
+struct WakerMessage {
+    pub waker: Option<Waker>,
+    pub message: Option<serde_json::Value>,
+}
+
+impl WakerMessage {
+    pub fn new() -> Self {
+        WakerMessage {
+            waker: None,
+            message: None,
+        }
+    }
+}
+
+impl Default for WakerMessage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(feature = "frontend")]
 pub mod frontend {
     pub use super::Message;
-    use crate::invoke_webview;
+    use crate::{WakerMessage, invoke_webview};
     use dashmap::DashMap;
     use serde::{de::DeserializeOwned, Deserialize, Serialize};
     use std::future::Future;
     use std::marker::PhantomData;
     use std::pin::Pin;
     use std::sync::{Arc, RwLock};
-    use std::task::{Context, Poll, Waker};
+    use std::task::{Context, Poll};
     use wasm_bindgen::{prelude::Closure, JsCast, JsValue};
-    use web_sys::{Document, Window, EventListener, console, CustomEvent};
-    use js_sys::Function;
+    use web_sys::{Document, Window, EventListener, CustomEvent};
     use yew::prelude::{Component, ComponentLink};
 
     type MessageFuturesMap =
-        Arc<DashMap<u32, Arc<RwLock<(Option<Waker>, Option<serde_json::Value>)>>>>;
+        Arc<DashMap<u32, Arc<RwLock<WakerMessage>>>>;
 
     pub struct WebViewMessageService {
         subscription_id: u32,
         message_futures_map: MessageFuturesMap,
         event_listener: EventListener,
-        event_listener_closure: Closure<dyn Fn(CustomEvent)>,
-        event_listener_function: Function,
+        _event_listener_closure: Closure<dyn Fn(CustomEvent)>,
     }
 
     impl Default for WebViewMessageService {
@@ -96,8 +115,6 @@ pub mod frontend {
                     Self::response_handler(subscription_id, listener_futures_map.clone(), event);
                 }));
 
-            let function = Function::new_with_args("event", "console.log(\"js inline responding to event: \", event);");
-
             let mut listener = EventListener::new();
             listener.handle_event(closure.as_ref().unchecked_ref());
 
@@ -112,8 +129,7 @@ pub mod frontend {
                 subscription_id,
                 message_futures_map,
                 event_listener: listener,
-                event_listener_closure: closure,
-                event_listener_function: function,
+                _event_listener_closure: closure,
             }
         }
 
@@ -138,9 +154,8 @@ pub mod frontend {
             let future_value = message_futures_map.remove(&message.message_id).unwrap().1;
 
             let mut future_value_write = future_value.write().unwrap();
-            future_value_write.1 = Some(message.inner);
-            future_value_write.0.as_ref().map(|waker| {
-                log::debug!("Mapping waker: {:?}", waker);
+            future_value_write.message = Some(message.inner);
+            future_value_write.waker.as_ref().map(|waker| {
                 waker.wake_by_ref();
             });
         }
@@ -157,7 +172,11 @@ pub mod frontend {
         fn send_message_to_webview<T: Serialize>(message: T) {
             let message_serialized =
                 serde_json::to_string(&message).expect("unable to serialize message");
-            unsafe { invoke_webview(message_serialized) };
+
+            #[allow(unused_unsafe)]
+            unsafe {
+                invoke_webview(message_serialized);
+            }
         }
 
         fn new_message<'a, T: Serialize + Deserialize<'a>>(&self, message: T) -> Message<T> {
@@ -182,14 +201,14 @@ pub mod frontend {
     }
 
     pub struct MessageFuture<T> {
-        message: Arc<RwLock<(Option<Waker>, Option<serde_json::Value>)>>,
+        message: Arc<RwLock<WakerMessage>>,
         return_type: PhantomData<T>,
     }
 
     impl<T> MessageFuture<T> {
         pub fn new() -> Self {
             Self {
-                message: Arc::new(RwLock::new((None, None))),
+                message: Arc::new(RwLock::new(WakerMessage::default())),
                 return_type: PhantomData,
             }
         }
@@ -199,27 +218,22 @@ pub mod frontend {
         type Output = T;
 
         fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-            let mut message = self.message.write().unwrap();
+            let mut waker_message = self.message.write().expect("unable to obtain RwLock on message");
 
-            log::debug!("successfully obtained message write lock");
-
-            if (*message).1.is_none() {
-                message.0 = Some(cx.waker().clone());
+            if (*waker_message).message.is_none() {
+                waker_message.waker = Some(cx.waker().clone());
                 return Poll::Pending;
             }
 
-            log::debug!("message is not none: {:?}", message.1);
-
-            let message = message.1.as_ref().unwrap();
+            let message = waker_message.message.as_ref().unwrap();
 
             log::debug!("Successfully obtained message as ref: {:?}", message);
 
             let result = serde_json::from_value(message.clone());
 
             if let Err(error) = &result {
-                log::debug!("Message deserialization error: {}", error);
+                log::error!("Message deserialization error: {}", error);
             }
-            
 
             let value = result.expect("unable to deserialize message");
             Poll::Ready(value)
