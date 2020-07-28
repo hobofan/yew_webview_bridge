@@ -1,6 +1,6 @@
-## yew_webview_bridge - 2-way communcation between yew and web-view
+## yew_webview_bridge - 2-way communication between yew and web-view
 
-This crate provides a 2-way communcation bridge between [web-view](https://github.com/Boscop/web-view) and [yew](https://github.com/yewstack/yew).
+This crate provides a 2-way communication bridge between [web-view](https://github.com/Boscop/web-view) and [yew](https://github.com/yewstack/yew).
 
 For the frontend, it provides a yew service (`WebViewMessageService`), with which components can easily send (and receive matching responses) to web-view.
 
@@ -14,14 +14,14 @@ The crate has to be included in both the frontend crate (the one with yew) and t
 
 ### Frontend crate
 
-```
+```toml
 [dependencies]
 yew_webview_bridge = { version = "0.1.0", features = ["frontend"] }
 ```
 
 ### Backend crate
 
-```
+```toml
 [dependencies]
 yew_webview_bridge = { version = "0.1.0", features = ["backend"] }
 ```

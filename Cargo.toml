@@ -12,14 +12,16 @@ readme = "README.md"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0" }
-rand = { version = "=0.6.5", features = ["wasm-bindgen"] }
+rand = { version = "0.7", features = ["wasm-bindgen"] }
+log = "0.4"
 
 # frontend
 dashmap = { version = "3.11", optional = true }
-stdweb = { version = "0.4.20", optional = true }
-wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen = { version = "0.2", optional = true, features = ["serde-serialize"] }
 wasm-bindgen-futures = { version = "0.4", optional = true }
-yew = { version = "0.17", default-features = false, features = ["std_web"], optional = true }
+yew = { version = "0.17", optional = true }
+web-sys = { version = "0.3", features = ["Window", "External", "Document", "EventTarget", "EventListener", "CustomEvent"], default-features=false, optional = true }
+js-sys = { version = "0.3", optional = true }
 
 # backend
 web-view = { version = "0.6", optional = true }
@@ -27,5 +29,5 @@ web-view = { version = "0.6", optional = true }
 [features]
 default = []
 
-frontend = ["yew", "wasm-bindgen-futures", "wasm-bindgen", "stdweb", "dashmap"]
+frontend = ["yew", "wasm-bindgen-futures", "wasm-bindgen", "dashmap", "web-sys", "js-sys"]
 backend = ["web-view"]
